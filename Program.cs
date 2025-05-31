@@ -130,11 +130,11 @@
     {
         public float yaw;
         public float pitch;
-        public float roll;
+        public float3 Position = new float3(0, 0, 0);
         public float3 ToWorldPoint(float3 p)
         {
             (float3 ihat, float3 jhat, float3 khat) = GetBasisVectors();
-            return TransformVector(ihat, jhat, khat, p);
+            return TransformVector(ihat, jhat, khat, p) + Position;
         }
         private (float3 ihat, float3 jhat, float3 khat) GetBasisVectors()
         {
@@ -151,7 +151,7 @@
         }
         private float3 TransformVector(float3 ihat, float3 jhat, float3 khat, float3 v)
         {
-            return v.x * ihat + v.y * jhat + v.z * khat;
+            return (v.x * ihat) + (v.y * jhat) + (v.z * khat);
         }
     }
     static IEnumerable<string> SplitByLine(string input)
@@ -185,12 +185,15 @@
         }
         return trianglePoints.ToArray();
     }
-    static float2 WorldtoScreen(float3 vertex, float2 numPixels)
+    static float2 VertexToScreen(float3 vertex, Transform transform, float2 screenSize)
     {
-        float screenHeightWorld = 5f;
-        float pixelsPerWorldUnit = numPixels.y / screenHeightWorld;
-        float2 pixelOffset = new float2(vertex.x, vertex.y) * pixelsPerWorldUnit;
-        return numPixels / 2f + pixelOffset;
+        float3 vertex_world = transform.ToWorldPoint(vertex);
+
+        float screenHeight_world = 5;
+        float pixelsPerWorldUnit = screenSize.y / screenHeight_world;
+
+        float2 pixelOffset = new float2(vertex_world.x, vertex_world.y) * pixelsPerWorldUnit;
+        return screenSize / 2 + pixelOffset;
     }
     static float3[,] Render(Model model, RenderTarget target, int frame)
     {
@@ -201,9 +204,9 @@
         float3[] triangleCols = model.TriangleCols; 
         for (int i = 0; i < points.Length; i += 3)
         {
-            float2 a = WorldtoScreen(points[i], target.Size);
-            float2 b = WorldtoScreen(points[i + 1], target.Size);
-            float2 c = WorldtoScreen(points[i + 2], target.Size);
+            float2 a = VertexToScreen(points[i], model.Transform, target.Size);
+            float2 b = VertexToScreen(points[i + 1], model.Transform, target.Size);
+            float2 c = VertexToScreen(points[i + 2], model.Transform, target.Size);
             float minXf = MathF.Min(a.x, MathF.Min(b.x, c.x));
             float maxXf = MathF.Max(a.x, MathF.Max(b.x, c.x));
             float minYf = MathF.Min(a.y, MathF.Min(b.y, c.y));
@@ -212,19 +215,12 @@
             int maxX = (int)MathF.Min(width - 1, MathF.Ceiling(maxXf));
             int minY = (int)MathF.Max(0, MathF.Floor(minYf));
             int maxY = (int)MathF.Min(height - 1, MathF.Ceiling(maxYf));
-            float2 v0 = b - a;
-            float2 v1 = c - a;
-            float denom = v0.x * v1.y - v1.x * v0.y;
-            if (denom == 0) continue;
             float3 col = triangleCols[i / 3];
             for (int y = minY; y <= maxY; y++)
             {
                 for (int x = minX; x <= maxX; x++)
                 {
                     float2 p = new float2(x, y);
-                    float2 v2 = p - a;
-                    float u = (v2.x * v1.y - v1.x * v2.y) / denom;
-                    float v = (v0.x * v2.y - v2.x * v0.y) / denom;
                     if (PointInTriangle(a, b, c, p))
                     {
                         image[x, y] = col;
