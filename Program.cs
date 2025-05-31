@@ -130,7 +130,7 @@
     {
         public float yaw;
         public float pitch;
-        public float3 Position = new float3(0, 0, 0);
+        public float3 Position;
         public float3 ToWorldPoint(float3 p)
         {
             (float3 ihat, float3 jhat, float3 khat) = GetBasisVectors();
@@ -185,12 +185,10 @@
         }
         return trianglePoints.ToArray();
     }
-    static float2 VertexToScreen(float3 vertex, Transform transform, float2 screenSize)
+    static float2 VertexToScreen(float3 vertex_world, float2 screenSize, float fov)
     {
-        float3 vertex_world = transform.ToWorldPoint(vertex);
-
-        float screenHeight_world = 5;
-        float pixelsPerWorldUnit = screenSize.y / screenHeight_world;
+        float screenHeight_world = (float)Math.Tan(fov / 2) * 2; // Explicit cast added to fix CS0266
+        float pixelsPerWorldUnit = screenSize.y / screenHeight_world / vertex_world.z;
 
         float2 pixelOffset = new float2(vertex_world.x, vertex_world.y) * pixelsPerWorldUnit;
         return screenSize / 2 + pixelOffset;
@@ -199,14 +197,15 @@
     {
         int width = target.Width;
         int height = target.Height;
+        float fov = 60f * (float)Math.PI / 180f;
         float3[,] image = target.ColourBuffer;
         float3[] points = model.GetTransformedPoints();
         float3[] triangleCols = model.TriangleCols; 
         for (int i = 0; i < points.Length; i += 3)
         {
-            float2 a = VertexToScreen(points[i], model.Transform, target.Size);
-            float2 b = VertexToScreen(points[i + 1], model.Transform, target.Size);
-            float2 c = VertexToScreen(points[i + 2], model.Transform, target.Size);
+            float2 a = VertexToScreen(points[i], target.Size, fov);
+            float2 b = VertexToScreen(points[i + 1], target.Size, fov);
+            float2 c = VertexToScreen(points[i + 2], target.Size, fov);  
             float minXf = MathF.Min(a.x, MathF.Min(b.x, c.x));
             float maxXf = MathF.Max(a.x, MathF.Max(b.x, c.x));
             float minYf = MathF.Min(a.y, MathF.Min(b.y, c.y));
@@ -247,57 +246,7 @@
             for (int x = 0; x < width; x++)
                 image[x, y] = new float3(0, 0, 0);
     }
-    public static void CreateTestAnimation()
-    {
-        const int width = 960;
-        const int height = 540;
-        const int triangleCount = 250;
-        const int frameCount = 60;
-        const float speed = 0.1f;
-        const float worldWidth = 5f;
-        float worldHeight = worldWidth * height / (float)width;
-        float2 halfWorld = new float2(worldWidth, worldHeight);
-        float2 quarterWorld = halfWorld / 2f;
-        float2[] points = new float2[triangleCount * 3];
-        float2[] velocities = new float2[points.Length];
-        float3[] triangleCols = new float3[triangleCount];
-        Random rng = new();
-        for (int i = 0; i < points.Length; i++)
-        {
-            float2 offset = (RandomFloat2(rng, 1, 1) - new float2(0.5f, 0.5f)) * 2f * quarterWorld;
-            points[i] = offset;
-        }
-        for (int i = 0; i < velocities.Length; i += 3)
-        {
-            float2 velocity = (RandomFloat2(rng, 1, 1) - new float2(0.5f, 0.5f)) * 1.5f;
-            velocities[i] = velocity;
-            velocities[i + 1] = velocity;
-            velocities[i + 2] = velocity;
-
-            triangleCols[i / 3] = new float3(rng.Next(256) / 255f, rng.Next(256) / 255f, rng.Next(256) / 255f);
-        }
-        RenderTarget target = new RenderTarget(width, height);
-        for (int frame = 0; frame < frameCount; frame++)
-        {
-            for (int i = 0; i < points.Length; i++)
-            {
-                points[i] += velocities[i] * speed;
-                if (points[i].x < -halfWorld.x || points[i].x > halfWorld.x)
-
-                    velocities[i].x *= -1;
-                if (points[i].y < -halfWorld.y || points[i].y > halfWorld.y)
-                    velocities[i].y *= -1;
-            }
-            Model model = new Model(ToFloat3(points), triangleCols);
-            ClearImage(target.ColourBuffer);
-            Render(model, target, frame);
-            WriteImagetoFile(target.ColourBuffer, $"art_{frame:D2}");
-            Console.WriteLine($"Test image created with dimensions {width}x{height}. Frame Number: {frame}");
-        }
-    }
-
-
-    public static void RenderCube()
+    public static void RenderModel()
     {
         string objPath = Path.Combine(Directory.GetCurrentDirectory(), "models", "cube.obj");
         string objString = File.ReadAllText(objPath);
@@ -309,13 +258,14 @@
             triangleCols[i] = new float3(rng.Next(256) / 255f, rng.Next(256) / 255f, rng.Next(256) / 255f);
         }
         Model cubeModel = new Model(cubeModelPoints, triangleCols);
+        cubeModel.Transform.Position = new float3(0, 0, 4f);
         RenderTarget renderTarget = new RenderTarget(960, 540);
         float3[,] image = new float3[renderTarget.Width, renderTarget.Height];
-        const int frameCount = 60;
+        const int frameCount = 120;
         for (int frame = 0; frame < frameCount; frame++)
         {
-            cubeModel.Transform.yaw = (float)(frame * Math.PI * -2 / frameCount);
-            cubeModel.Transform.pitch = (float)(Math.PI / 4 * Math.Sin(frame * Math.PI * 2 / frameCount));
+            cubeModel.Transform.yaw = (float)(frame * Math.PI * 2f / frameCount);
+            cubeModel.Transform.pitch = (float)(frame * Math.PI * 2f / frameCount);
             ClearImage(renderTarget.ColourBuffer);
             WriteImagetoFile(Render(cubeModel, renderTarget, frame), $"cube_frame_{frame:D2}");
             Console.WriteLine($"Cube image created for frame {frame}");
@@ -323,6 +273,6 @@
     }
     public static void Main(string[] args)
     {
-        RenderCube();
+        RenderModel();
     }
 }
