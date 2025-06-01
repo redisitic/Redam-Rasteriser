@@ -11,9 +11,9 @@ A software rasterizer based on one made by Sebastian Lague (https://www.youtube.
 - Depth Buffering
 - Animation Output
 - Per-Triangle Parallelization
+- Basic Directional and Ambient Lighting
 
 ## ToDo Features:
 - Texture Mapping
-- Phong Shading
 - Normal Mapping
 - Render in Game Window

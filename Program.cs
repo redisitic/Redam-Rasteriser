@@ -1,5 +1,8 @@
-﻿using System.Threading.Tasks;
-
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 public class Program
 {
     public struct float3
@@ -17,13 +20,28 @@ public class Program
         public float g { get => y; set => y = value; }
         public float b { get => z; set => z = value; }
         public static float Dot(float3 a, float3 b) => a.x * b.x + a.y * b.y + a.z * b.z;
+        public static float3 Cross(float3 a, float3 b) => new float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+        public static float3 Normalize(float3 v)
+        {
+            float len = MathF.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+            return len > 0 ? v / len : new float3(0, 0, 0);
+        }
         public static float3 operator +(float3 a, float3 b) => new float3(a.x + b.x, a.y + b.y, a.z + b.z);
         public static float3 operator -(float3 a, float3 b) => new float3(a.x - b.x, a.y - b.y, a.z - b.z);
         public static float3 operator *(float3 a, float scalar) => new float3(a.x * scalar, a.y * scalar, a.z * scalar);
+        public static float3 operator *(float3 a, float3 b) => new float3(a.x * b.x, a.y * b.y, a.z * b.z);
         public static float3 operator *(float scalar, float3 a) => a * scalar;
         public static float3 operator /(float3 a, float scalar) => new float3(a.x / scalar, a.y / scalar, a.z / scalar);
         public static implicit operator float3(float2 v) => new float3(v.x, v.y, 0);
         public override string ToString() => $"({x}, {y}, {z})";
+        public override int GetHashCode()
+        {
+            const float epsilon = 1e-6f;
+            int hashX = ((int)(x / epsilon)).GetHashCode();
+            int hashY = ((int)(y / epsilon)).GetHashCode();
+            int hashZ = ((int)(z / epsilon)).GetHashCode();
+            return HashCode.Combine(hashX, hashY, hashZ);
+        }
     }
     public struct float2
     {
@@ -90,9 +108,9 @@ public class Program
                 for (int x = 0; x < width; x++)
                 {
                     float3 pixel = image[x, y];
-                    writer.Write((byte)(pixel.b * 255));
-                    writer.Write((byte)(pixel.g * 255));
-                    writer.Write((byte)(pixel.r * 255));
+                    writer.Write((byte)(MathF.Max(0, MathF.Min(255, pixel.b * 255))));
+                    writer.Write((byte)(MathF.Max(0, MathF.Min(255, pixel.g * 255))));
+                    writer.Write((byte)(MathF.Max(0, MathF.Min(255, pixel.r * 255))));
                     writer.Write((byte)255);
                 }
             }
@@ -102,10 +120,16 @@ public class Program
     {
         return input.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
     }
-    public static float3[] LoadOBJFile(string objString)
+    public struct OBJData
+    {
+        public float3[] trianglePoints;
+        public float3[] triangleNormals;
+    }
+    public static OBJData LoadOBJFile(string objString)
     {
         List<float3> allPoints = new List<float3>();
         List<float3> trianglePoints = new List<float3>();
+        List<float3> triangleNormals = new List<float3>();
 
         foreach (string line in SplitByLine(objString))
         {
@@ -117,29 +141,50 @@ public class Program
             else if (line.StartsWith("f "))
             {
                 string[] faceIndexGroups = line[2..].Split(' ');
-                for (int i = 0; i < faceIndexGroups.Length; i++)
+                List<int> pointIndices = new List<int>();
+                foreach (string group in faceIndexGroups)
                 {
-                    int[] indexGroup = faceIndexGroups[i].Split('/').Select(int.Parse).ToArray();
-                    int pointIndex = indexGroup[0] - 1;
-                    if (i >= 3) trianglePoints.Add(trianglePoints[^3]);
-                    if (i >= 3) trianglePoints.Add(trianglePoints[^2]);
-                    trianglePoints.Add(allPoints[pointIndex]);
+                    string[] parts = group.Split('/');
+                    pointIndices.Add(int.Parse(parts[0]) - 1);
+                }
+                for (int i = 1; i < pointIndices.Count - 1; i++)
+                {
+                    float3 p0 = allPoints[pointIndices[0]];
+                    float3 p1 = allPoints[pointIndices[i]];
+                    float3 p2 = allPoints[pointIndices[i + 1]];
+
+                    trianglePoints.Add(p0);
+                    trianglePoints.Add(p1);
+                    trianglePoints.Add(p2);
+
+                    float3 faceNormal = float3.Normalize(float3.Cross(p1 - p0, p2 - p0));
+                    triangleNormals.Add(faceNormal);
+                    triangleNormals.Add(faceNormal);
+                    triangleNormals.Add(faceNormal);
                 }
             }
         }
-        return trianglePoints.ToArray();
+
+        return new OBJData
+        {
+            trianglePoints = trianglePoints.ToArray(),
+            triangleNormals = triangleNormals.ToArray()
+        };
     }
+
     public class RenderTarget(int w, int h)
     {
         public readonly float3[,] ColourBuffer = new float3[w, h];
         public readonly float[,] DepthBuffer = new float[w, h];
+        public readonly float3[,] NormalBuffer = new float3[w, h];
         public readonly int Width = w;
         public readonly int Height = h;
         public readonly float2 Size = new float2(w, h);
     }
-    public class Model(float3[] points, float3[] cols)
+    public class Model(float3[] points, float3[] normals, float3[] cols)
     {
         public readonly float3[] OriginalPoints = points;
+        public readonly float3[] OriginalNormals = normals;
         public readonly float3[] TriangleCols = cols;
         public Transform Transform = new Transform();
         public float3[] GetTransformedPoints()
@@ -151,6 +196,20 @@ public class Program
             }
             return transformed;
         }
+        public float3[] GetTransformedNormals()
+        {
+            float3[] transformed = new float3[OriginalNormals.Length];
+            for (int i = 0; i < OriginalNormals.Length; i++)
+            {
+                transformed[i] = Transform.ToWorldNormal(OriginalNormals[i]);
+            }
+            return transformed;
+        }
+    }
+    public class Light(float3 Direction, float3 Color)
+    {
+        public float3 Direction { get; } = Direction;
+        public float3 Color { get; } = Color/255f;
     }
     public class Transform
     {
@@ -161,6 +220,11 @@ public class Program
         {
             (float3 ihat, float3 jhat, float3 khat) = GetBasisVectors();
             return TransformVector(ihat, jhat, khat, p) + Position;
+        }
+        public float3 ToWorldNormal(float3 n)
+        {
+            (float3 ihat, float3 jhat, float3 khat) = GetBasisVectors();
+            return float3.Normalize(TransformVector(ihat, jhat, khat, n));
         }
         private (float3 ihat, float3 jhat, float3 khat) GetBasisVectors()
         {
@@ -224,38 +288,62 @@ public class Program
             {
                 target.ColourBuffer[x, y] = new float3(0, 0, 0);
                 target.DepthBuffer[x, y] = float.MaxValue;
+                target.NormalBuffer[x, y] = new float3(0, 0, 0);
             }
         }
     }
-    static float3[,] Render(Model model, RenderTarget target, int frame, bool visualizeDepth = false)
+    static float3 CalculateLighting(float3 normal, float3 baseColor, Light[] Lights, float ambientStrength = 0.1f)
+    {
+        float3 result = new float3(0, 0, 0);
+        foreach (Light light in Lights)
+        {
+            float3 lightDir = float3.Normalize(light.Direction);
+            float3 lightColor = light.Color;
+            float diff = MathF.Max(float3.Dot(normal, lightDir), 0.0f);
+            float3 diffuse = lightColor * diff;
+            result += (baseColor / 255f) * diffuse;
+        }
+        result += ambientStrength * baseColor / 255f;
+        result.x = MathF.Max(0, MathF.Min(1, result.x));
+        result.y = MathF.Max(0, MathF.Min(1, result.y));
+        result.z = MathF.Max(0, MathF.Min(1, result.z));
+        return result;
+    }
+    static float3[,] Render(Model model, RenderTarget target, Light[] Lights, int frame, bool visualizeDepth = false, bool enableLighting = true)
     {
         int width = target.Width;
         int height = target.Height;
         float fov = 60f * (float)Math.PI / 180f;
         float3[,] image = target.ColourBuffer;
+
         float3[] points = model.GetTransformedPoints();
+        float3[] normals = model.GetTransformedNormals();
         float3[] triangleCols = model.TriangleCols;
+
         float nearPlane = 1f;
         float farPlane = 5f;
+        float3 lightDir = float3.Normalize(new float3(0.5f, -1f, 0.3f));
+        float3 lightColor = new float3(1f, 1f, 1f);
+
         int triangleCount = points.Length / 3;
         int[] triangleIndices = Enumerable.Range(0, triangleCount).ToArray();
+
         Parallel.ForEach(triangleIndices, i =>
         {
             int pointIndex = i * 3;
             float3 a = VertexToScreen(points[pointIndex], target.Size, fov);
             float3 b = VertexToScreen(points[pointIndex + 1], target.Size, fov);
             float3 c = VertexToScreen(points[pointIndex + 2], target.Size, fov);
-
             float minXf = MathF.Min(a.x, MathF.Min(b.x, c.x));
             float maxXf = MathF.Max(a.x, MathF.Max(b.x, c.x));
             float minYf = MathF.Min(a.y, MathF.Min(b.y, c.y));
             float maxYf = MathF.Max(a.y, MathF.Max(b.y, c.y));
-
             int minX = (int)MathF.Max(0, MathF.Floor(minXf));
             int maxX = (int)MathF.Min(width - 1, MathF.Ceiling(maxXf));
             int minY = (int)MathF.Max(0, MathF.Floor(minYf));
             int maxY = (int)MathF.Min(height - 1, MathF.Ceiling(maxYf));
             float3 col = triangleCols[i];
+            float3 faceNormal = normals[pointIndex];
             for (int y = minY; y <= maxY; y++)
             {
                 for (int x = minX; x <= maxX; x++)
@@ -266,20 +354,24 @@ public class Program
                     {
                         float3 depths = new float3(a.z, b.z, c.z);
                         float depth = float3.Dot(depths, weights);
+                        if (depth < target.DepthBuffer[x, y])
                         {
-                            if (depth < target.DepthBuffer[x, y])
+                            target.NormalBuffer[x, y] = faceNormal;
+                            if (visualizeDepth)
                             {
-                                if (visualizeDepth)
-                                {
-                                    float normalizedDepth = MathF.Max(0, MathF.Min(1, (depth - nearPlane) / (farPlane - nearPlane)));
-                                    image[x, y] = new float3(normalizedDepth, normalizedDepth, normalizedDepth);
-                                }
-                                else
-                                {
-                                    image[x, y] = col;
-                                }
-                                target.DepthBuffer[x, y] = depth;
+                                float normalizedDepth = MathF.Max(0, MathF.Min(1, (depth - nearPlane) / (farPlane - nearPlane)));
+                                image[x, y] = new float3(normalizedDepth, normalizedDepth, normalizedDepth);
                             }
+                            else
+                            {
+                                float3 finalColor = col;
+                                if (enableLighting)
+                                {
+                                    finalColor = CalculateLighting(faceNormal, col, Lights);
+                                }
+                                image[x, y] = finalColor;
+                            }
+                            target.DepthBuffer[x, y] = depth;
                         }
                     }
                 }
@@ -291,24 +383,31 @@ public class Program
     {
         string objPath = Path.Combine(Directory.GetCurrentDirectory(), "models", "suzanne.obj");
         string objString = File.ReadAllText(objPath);
-        float3[] cubeModelPoints = LoadOBJFile(objString);
+        OBJData objData = LoadOBJFile(objString);
+
         Random rng = new();
-        float3[] triangleCols = new float3[cubeModelPoints.Length / 3];
+        float3[] triangleCols = new float3[objData.trianglePoints.Length / 3];
         for (int i = 0; i < triangleCols.Length; i++)
         {
-            triangleCols[i] = new float3(((rng.Next(128) + 112) / 255f), ((rng.Next(128) + 112) / 255f), ((rng.Next(128) + 112) / 255f));
+            triangleCols[i] = new float3(255, 255, 255);
         }
-        Model cubeModel = new Model(cubeModelPoints, triangleCols);
-        cubeModel.Transform.Position = new float3(0, 0, 3f);
+        Model model = new Model(objData.trianglePoints, objData.triangleNormals, triangleCols);
+        model.Transform.Position = new float3(0, 0, 3f);
         float inYaw = (float)Math.PI;
         RenderTarget renderTarget = new RenderTarget(960, 540);
+        Light[] Lights = new Light[2]
+        {
+            new Light(new float3(-0.3f, 0.6f, -0.1f), new float3(255, 206, 166)),
+            new Light(new float3(0.3f, 0.6f, -0.1f), new float3(210, 223, 255))
+        };
         bool renderDepth = false;
+        bool enableLighting = true;
         const int frameCount = 120;
         for (int frame = 0; frame < frameCount; frame++)
         {
-            cubeModel.Transform.yaw = (float)(frame * Math.PI * 2f / frameCount) + inYaw;
+            model.Transform.yaw = (float)(frame * Math.PI * 2f / frameCount) + inYaw;
             ClearBuffers(renderTarget);
-            Render(cubeModel, renderTarget, frame, renderDepth);
+            Render(model, renderTarget, Lights, frame, renderDepth, enableLighting);
             WriteImagetoFile(renderTarget.ColourBuffer, $"Raster{frame:D2}");
             Console.WriteLine($"Raster image created for frame {frame}");
         }
