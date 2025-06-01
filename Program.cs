@@ -1,4 +1,6 @@
-﻿public class Program
+﻿using System.Threading.Tasks;
+
+public class Program
 {
     public struct float3
     {
@@ -235,20 +237,25 @@
         float3[] triangleCols = model.TriangleCols;
         float nearPlane = 1f;
         float farPlane = 5f;
-        for (int i = 0; i < points.Length; i += 3)
+        int triangleCount = points.Length / 3;
+        int[] triangleIndices = Enumerable.Range(0, triangleCount).ToArray();
+        Parallel.ForEach(triangleIndices, i =>
         {
-            float3 a = VertexToScreen(points[i], target.Size, fov);
-            float3 b = VertexToScreen(points[i + 1], target.Size, fov);
-            float3 c = VertexToScreen(points[i + 2], target.Size, fov);
+            int pointIndex = i * 3;
+            float3 a = VertexToScreen(points[pointIndex], target.Size, fov);
+            float3 b = VertexToScreen(points[pointIndex + 1], target.Size, fov);
+            float3 c = VertexToScreen(points[pointIndex + 2], target.Size, fov);
+
             float minXf = MathF.Min(a.x, MathF.Min(b.x, c.x));
             float maxXf = MathF.Max(a.x, MathF.Max(b.x, c.x));
             float minYf = MathF.Min(a.y, MathF.Min(b.y, c.y));
             float maxYf = MathF.Max(a.y, MathF.Max(b.y, c.y));
+
             int minX = (int)MathF.Max(0, MathF.Floor(minXf));
             int maxX = (int)MathF.Min(width - 1, MathF.Ceiling(maxXf));
             int minY = (int)MathF.Max(0, MathF.Floor(minYf));
             int maxY = (int)MathF.Min(height - 1, MathF.Ceiling(maxYf));
-            float3 col = triangleCols[i / 3];
+            float3 col = triangleCols[i];
             for (int y = minY; y <= maxY; y++)
             {
                 for (int x = minX; x <= maxX; x++)
@@ -259,23 +266,25 @@
                     {
                         float3 depths = new float3(a.z, b.z, c.z);
                         float depth = float3.Dot(depths, weights);
-                        if (depth < target.DepthBuffer[x, y])
                         {
-                            if (visualizeDepth)
+                            if (depth < target.DepthBuffer[x, y])
                             {
-                                float normalizedDepth = MathF.Max(0, MathF.Min(1, (depth - nearPlane) / (farPlane - nearPlane)));
-                                image[x, y] = new float3(normalizedDepth, normalizedDepth, normalizedDepth);
+                                if (visualizeDepth)
+                                {
+                                    float normalizedDepth = MathF.Max(0, MathF.Min(1, (depth - nearPlane) / (farPlane - nearPlane)));
+                                    image[x, y] = new float3(normalizedDepth, normalizedDepth, normalizedDepth);
+                                }
+                                else
+                                {
+                                    image[x, y] = col;
+                                }
+                                target.DepthBuffer[x, y] = depth;
                             }
-                            else
-                            {
-                                image[x, y] = col;
-                            }
-                            target.DepthBuffer[x, y] = depth;
                         }
                     }
                 }
             }
-        }
+        });
         return image;
     }
     public static void RenderModel()

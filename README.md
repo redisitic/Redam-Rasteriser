@@ -10,6 +10,7 @@ A software rasterizer based on one made by Sebastian Lague (https://www.youtube.
 - Backface Culling
 - Depth Buffering
 - Animation Output
+- Per-Triangle Parallelization
 
 ## ToDo Features:
 - Texture Mapping
